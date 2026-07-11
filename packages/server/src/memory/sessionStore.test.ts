@@ -1,0 +1,209 @@
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { Database } from 'bun:sqlite';
+import { join } from 'node:path';
+import type Anthropic from '@anthropic-ai/sdk';
+import { MockProvider } from '../provider/mock';
+import type { ProviderEvent } from '../provider/types';
+import { builtinRegistry } from '../tools/registry';
+import { getSession, resetSessions } from '../turn/session';
+import { runTurn } from '../turn/runTurn';
+import { migrate } from '../sql';
+import { appendL2, listL2, loadSession, persistSession, setMemoryDb } from './sessionStore';
+
+let db: Database;
+
+function freshDb(): Database {
+  const d = new Database(':memory:', { strict: true });
+  migrate(d, join(import.meta.dir, '..', 'migrations'));
+  return d;
+}
+
+beforeEach(() => {
+  db = freshDb();
+  setMemoryDb(db);
+  resetSessions();
+  // These tests verify RAW persistence/L2-rebuild fidelity, so disable the
+  // v0.16.3 history cleaning (which intentionally strips thinking). The cleaning
+  // behavior is covered in cleanHistory.test.ts.
+  Bun.env['LUNA_CLEAN_HISTORY'] = '0';
+});
+
+afterEach(() => {
+  setMemoryDb(null);
+  db.close(false);
+  resetSessions();
+  delete Bun.env['LUNA_CLEAN_HISTORY'];
+});
+
+function toolTurnRounds(): ProviderEvent[][] {
+  const toolContent = [
+    { type: 'thinking', thinking: 'let me check', signature: 'sig-abc' },
+    { type: 'tool_use', id: 'tu1', name: 'time_now', input: {} },
+  ] as unknown as Anthropic.ContentBlock[];
+  const textContent = [{ type: 'text', text: 'noon' }] as unknown as Anthropic.ContentBlock[];
+  return [
+    [
+      { kind: 'text_delta', text: 'check ' },
+      {
+        kind: 'message_stop',
+        stopReason: 'tool_use',
+        toolUses: [{ id: 'tu1', name: 'time_now', input: {} }],
+        assistantContent: toolContent,
+        usage: { input_tokens: 10, output_tokens: 5 },
+      },
+    ],
+    [
+      { kind: 'text_delta', text: 'noon' },
+      {
+        kind: 'message_stop',
+        stopReason: 'end_turn',
+        toolUses: [],
+        assistantContent: textContent,
+        usage: { input_tokens: 10, output_tokens: 2 },
+      },
+    ],
+  ];
+}
+
+describe('sessionStore', () => {
+  test('restart survives history including signed thinking + tool_use blocks', async () => {
+    const session = getSession('default');
+    await runTurn({
+      session,
+      turnId: 't1',
+      userText: 'what time',
+      provider: new MockProvider(toolTurnRounds()),
+      registry: builtinRegistry,
+      emit: () => {},
+    });
+
+    const historyBefore = JSON.stringify(session.history);
+    const turnSeqBefore = session.turnSeq;
+    expect(session.history.length).toBe(4);
+
+    resetSessions();
+    const rehydrated = getSession('default');
+    expect(JSON.stringify(rehydrated.history)).toBe(historyBefore);
+    expect(rehydrated.turnSeq).toBe(turnSeqBefore);
+
+    const assistantMsg = rehydrated.history[1];
+    const blocks = assistantMsg?.content as Anthropic.ContentBlock[];
+    expect(blocks[0]?.type).toBe('thinking');
+    expect((blocks[0] as { signature: string }).signature).toBe('sig-abc');
+  });
+
+  test('L2 rows appended in order with full text + raw_json fidelity', async () => {
+    const session = getSession('default');
+    for (let i = 0; i < 3; i++) {
+      const text = [{ type: 'text', text: `reply ${i}` }] as unknown as Anthropic.ContentBlock[];
+      await runTurn({
+        session,
+        turnId: `t${i}`,
+        userText: `msg ${i}`,
+        provider: new MockProvider([
+          [
+            { kind: 'text_delta', text: `reply ${i}` },
+            {
+              kind: 'message_stop',
+              stopReason: 'end_turn',
+              toolUses: [],
+              assistantContent: text,
+              usage: { input_tokens: 1, output_tokens: 1 },
+            },
+          ],
+        ]),
+        registry: builtinRegistry,
+        emit: () => {},
+      });
+    }
+
+    const rows = listL2('default');
+    expect(rows.length).toBe(3);
+    expect(rows.map((r) => r.user_text)).toEqual(['msg 0', 'msg 1', 'msg 2']);
+    expect(rows[1]?.assistant_text).toBe('reply 1');
+    const raw = JSON.parse(rows[0]!.raw_json) as Anthropic.MessageParam[];
+    expect(raw.length).toBe(2);
+    expect(raw[0]?.role).toBe('user');
+    expect(raw[1]?.role).toBe('assistant');
+  });
+
+  // v0.20.6 — listL2 without a limit loads the WHOLE timeline (the old 10000 magic
+  // cap dropped the NEWEST rows on reload past it). An explicit limit still works.
+  test('listL2 loads all rows uncapped (newest preserved); explicit limit honored', () => {
+    for (let i = 0; i < 25; i++) {
+      appendL2({ sessionId: 'big', turnId: `t${i}`, userText: `u${i}`, assistantText: `a${i}`, rawContent: [] });
+    }
+    const all = listL2('big');
+    expect(all.length).toBe(25);
+    expect(all.at(-1)?.user_text).toBe('u24'); // newest is present + last (ASC)
+    expect(listL2('big', { limit: 5 }).length).toBe(5);
+  });
+
+  test('unset seam = fully ephemeral (no throws, no persistence)', async () => {
+    setMemoryDb(null);
+    const session = getSession('eph');
+    persistSession('eph', session.history, 0);
+    appendL2({ sessionId: 'eph', turnId: 't', userText: 'u', assistantText: 'a', rawContent: [] });
+    expect(loadSession('eph')).toBeNull();
+    expect(listL2('eph')).toEqual([]);
+  });
+
+  test('persistSession upserts turn_seq bookkeeping (single row, constant blob)', () => {
+    // A3 (v0.16.2): persistSession persists only bookkeeping; the history blob is
+    // a constant placeholder and history is rebuilt from L2 on load.
+    persistSession('s1', [{ role: 'user', content: 'a' }], 1);
+    persistSession(
+      's1',
+      [
+        { role: 'user', content: 'a' },
+        { role: 'assistant', content: 'b' },
+      ],
+      2,
+    );
+    const loaded = loadSession('s1');
+    expect(loaded?.turnSeq).toBe(2);
+    const count = db.prepare('SELECT COUNT(*) c FROM sessions').get() as { c: number };
+    expect(count.c).toBe(1);
+    const row = db.prepare("SELECT history_json FROM sessions WHERE id = 's1'").get() as {
+      history_json: string;
+    };
+    expect(row.history_json).toBe('[]'); // no longer the growing per-turn blob
+  });
+
+  test('A3: full history rebuilds from L2 on reload; blob stays constant-size', async () => {
+    const session = getSession('default');
+    for (let i = 0; i < 3; i++) {
+      const text = [{ type: 'text', text: `r${i}` }] as unknown as Anthropic.ContentBlock[];
+      await runTurn({
+        session,
+        turnId: `t${i}`,
+        userText: `m${i}`,
+        provider: new MockProvider([
+          [
+            { kind: 'text_delta', text: `r${i}` },
+            {
+              kind: 'message_stop',
+              stopReason: 'end_turn',
+              toolUses: [],
+              assistantContent: text,
+              usage: { input_tokens: 1, output_tokens: 1 },
+            },
+          ],
+        ]),
+        registry: builtinRegistry,
+        emit: () => {},
+      });
+    }
+    const before = JSON.stringify(session.history);
+    expect(session.history.length).toBe(6); // 3 turns × (user + assistant)
+
+    resetSessions();
+    const reload = getSession('default');
+    expect(JSON.stringify(reload.history)).toBe(before); // rebuilt verbatim from L2
+
+    const row = db.prepare("SELECT history_json FROM sessions WHERE id = 'default'").get() as {
+      history_json: string;
+    };
+    expect(row.history_json).toBe('[]'); // not the O(N) blob
+  });
+});

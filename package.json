@@ -1,0 +1,22 @@
+{
+  "name": "agent-luna-typescript",
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/Alan-Yu-2077/Luna-ts.git" },
+  "private": true,
+  "type": "module",
+  "workspaces": ["packages/*"],
+  "scripts": {
+    "dev": "bun scripts/dev-all.ts",
+    "dev:isolated": "bun scripts/dev-isolated.ts",
+    "dev:server": "bun run packages/server/src/main.ts",
+    "dev:web": "bun packages/web/dev-server.ts",
+    "test": "bun test",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "prettier": "^3.3.0",
+    "typescript": "^5.6.0"
+  }
+}

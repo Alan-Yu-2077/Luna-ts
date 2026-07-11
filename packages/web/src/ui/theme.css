@@ -1,0 +1,533 @@
+:root {
+  --stripe-a: #e4eef9;
+  --stripe-b: #f5f9fd;
+  --lace: #b9d4ef;
+  --sky: #bfe0fb;
+  --sky-deep: #a9d3f5;
+  --sky-text: #27496b;
+  --panel: #c8ccd6;
+  --panel-edge: #b6bbc7;
+  --inner: #ffffff;
+  --inner-border: #dbe6f2;
+  --user-bubble: #f0f3f7;
+  --user-text: #4a566a;
+  --lavender: #cdbef0;
+  --lavender-deep: #b6a6e0;
+  --lavender-text: #473075;
+  --tool-bg: #efe7fb;
+  --tool-border: #cdbef0;
+  --tool-text: #5b3f8c;
+  --dream-bg: #d9d2f5;
+  --proactive-bg: #e2f3ea;
+  --proactive-text: #3f7a57;
+  --error-bg: #fbe6ea;
+  --error-text: #a8475e;
+  --ink: #4a5a6e;
+  --ink-soft: #5a7295;
+  --muted: #a7b6c8;
+  --ok: #5fb87f;
+  --radius: 16px;
+  --font: "PingFang SC", "Hiragino Sans GB", ui-rounded, "Segoe UI", system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  font-family: var(--font);
+  color: var(--ink);
+  background: repeating-linear-gradient(
+    90deg,
+    var(--stripe-a) 0, var(--stripe-a) 16px,
+    var(--stripe-b) 16px, var(--stripe-b) 32px
+  );
+}
+
+.luna-app { position: relative; height: 100vh; display: flex; flex-direction: column; }
+
+.lace-top {
+  height: 14px; flex: none;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='14'%3E%3Cpath d='M0,0L20,0L10,14Z' fill='%23b9d4ef'/%3E%3C/svg%3E") repeat-x;
+}
+.lace-bottom {
+  height: 16px; flex: none;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='16'%3E%3Cpath d='M0,16L0,8Q12,-2,24,8L24,16Z' fill='%23b9d4ef'/%3E%3C/svg%3E") repeat-x;
+}
+
+.stage {
+  position: relative; flex: 1; display: flex; gap: 20px; padding: 22px; min-height: 0;
+}
+
+.status-badge {
+  position: absolute; top: 8px; left: 14px; z-index: 3;
+  display: inline-flex; align-items: center; gap: 6px;
+  background: #fff; color: #5b7fa6; font-size: 12px; font-weight: 500;
+  padding: 4px 11px; border-radius: 999px;
+  box-shadow: 0 1px 4px rgba(90, 120, 160, 0.18);
+}
+.status-badge::before {
+  content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--muted);
+}
+.status-badge[data-status="open"]::before { background: var(--ok); }
+.status-badge[data-status="closed"]::before { background: #e0a35f; }
+
+.motif-layer { position: absolute; inset: 0; pointer-events: none; z-index: 0; color: var(--lace); }
+.motif { position: absolute; opacity: 0.7; line-height: 1; }
+
+.chat-panel {
+  position: relative; z-index: 2; flex: 0 0 38%;
+  display: flex; flex-direction: column; min-height: 0;
+  background: var(--panel); border-radius: var(--radius);
+  padding: 14px 14px 12px; box-shadow: 0 3px 0 var(--panel-edge);
+}
+.puff { position: absolute; background: var(--panel); border-radius: 50%; }
+.puff.l1 { top: -9px; left: 16px; width: 30px; height: 20px; }
+.puff.l2 { top: -13px; left: 34px; width: 22px; height: 18px; }
+.puff.r1 { top: -9px; right: 16px; width: 30px; height: 20px; }
+.puff.r2 { top: -13px; right: 34px; width: 22px; height: 18px; }
+
+.chat-header {
+  display: flex; align-items: center; justify-content: center; gap: 7px;
+  background: #fff; border-radius: 999px; padding: 6px 12px; margin-bottom: 10px;
+  font-size: 13px; font-weight: 500; color: #56657a;
+}
+.chat-header .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
+
+.chat-log {
+  flex: 1; overflow-y: auto; min-height: 0;
+  background: var(--inner); border: 1.5px dashed var(--inner-border); border-radius: 14px;
+  padding: 12px; display: flex; flex-direction: column; gap: 10px;
+}
+
+.bubble-row { display: flex; flex-direction: column; max-width: 88%; }
+.bubble-row.user { align-self: flex-start; align-items: flex-start; }
+.bubble-row.luna { align-self: flex-end; align-items: flex-end; }
+.bubble {
+  font-size: 13px; line-height: 1.5; padding: 8px 11px;
+  white-space: pre-wrap; word-break: break-word;
+}
+.bubble.user { background: var(--user-bubble); color: var(--user-text); border-radius: 13px 13px 13px 4px; }
+.bubble.luna { background: var(--sky); color: var(--sky-text); border-radius: 13px 13px 4px 13px; }
+.ts { font-size: 10px; color: var(--muted); margin-top: 3px; }
+.bubble-row.user .ts { margin-left: 4px; }
+.bubble-row.luna .ts { margin-right: 4px; }
+
+.card {
+  align-self: flex-end; display: inline-flex; align-items: center;
+  font-size: 11px; padding: 4px 10px; border-radius: 999px; border: 1px dashed transparent;
+}
+.card.tool { background: var(--tool-bg); border-color: var(--tool-border); color: var(--tool-text); }
+.card.dream { background: var(--dream-bg); color: var(--lavender-text); align-self: center; }
+.card.proactive { background: var(--proactive-bg); color: var(--proactive-text); }
+.card.expression { background: #eef3f9; color: var(--ink-soft); }
+.card.error { background: var(--error-bg); color: var(--error-text); align-self: center; }
+
+.chat-input-row { display: flex; align-items: center; gap: 8px; padding-top: 10px; }
+.chat-input {
+  flex: 1; background: #fff; border: none; border-radius: 999px;
+  padding: 9px 14px; font: inherit; font-size: 13px; color: var(--ink); outline: none;
+}
+.chat-input::placeholder { color: var(--muted); }
+.chat-input:disabled { background: #eef0f3; color: var(--muted); }
+.send-btn {
+  flex: none; width: 36px; height: 36px; border-radius: 50%; border: none;
+  background: var(--sky-deep); color: #1f4c74; font-size: 16px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
+.send-btn:active { transform: scale(0.94); }
+
+.model-stage {
+  position: relative; z-index: 1; flex: 1; min-width: 0;
+  display: flex; align-items: center; justify-content: center;
+}
+.model-placeholder {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  width: 180px; height: 230px; text-align: center; color: var(--ink-soft);
+  border: 2px dashed #c3def5; border-radius: 18px; background: rgba(255, 255, 255, 0.5);
+  animation: float 4.5s ease-in-out infinite;
+}
+.ph-circle {
+  width: 96px; height: 96px; border-radius: 50%; background: #ddeafb; border: 2px solid #fff;
+  display: flex; align-items: center; justify-content: center;
+  color: #6f88c0; font-size: 15px; font-weight: 500;
+}
+.model-placeholder .label { font-size: 13px; font-weight: 500; color: var(--ink-soft); margin: 12px 0 2px; }
+.model-placeholder .sub { font-size: 11px; color: var(--muted); }
+
+.dream-btn {
+  position: absolute; right: 10px; bottom: 8px; z-index: 4;
+  display: inline-flex; align-items: center; gap: 6px; border: none; cursor: pointer;
+  background: var(--lavender); color: var(--lavender-text);
+  font: inherit; font-size: 14px; font-weight: 500;
+  padding: 10px 18px; border-radius: 999px; box-shadow: 0 3px 0 var(--lavender-deep);
+}
+.dream-btn:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--lavender-deep); }
+
+@keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-7px); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .model-placeholder { animation: none; }
+}
+
+@media (max-width: 720px) {
+  .stage { flex-direction: column; }
+  .chat-panel { flex: 1 1 auto; order: 2; }
+  .model-stage { flex: 0 0 210px; order: 1; }
+}
+
+/* dream overlay (v0.13.4) */
+.dream-overlay {
+  position: absolute; inset: 0; z-index: 20; display: none;
+  flex-direction: column; align-items: center; justify-content: center; gap: 12px;
+  color: #fff; text-align: center; overflow: hidden;
+  background: linear-gradient(160deg, rgba(74, 86, 140, 0.66), rgba(150, 170, 220, 0.5));
+  backdrop-filter: blur(3px);
+}
+.dream-overlay.on { display: flex; }
+.dream-overlay .moon { font-size: 56px; animation: dream-float 5s ease-in-out infinite; }
+.dream-overlay .dream-title { font-size: 18px; font-weight: 500; text-shadow: 0 1px 6px rgba(40, 50, 90, 0.4); }
+.dream-overlay .dream-caption { font-size: 13px; opacity: 0.85; min-height: 1.2em; padding: 0 24px; }
+.dream-overlay .wake-btn {
+  margin-top: 6px; border: none; cursor: pointer; font: inherit; font-size: 14px; font-weight: 500;
+  background: #ffe9a8; color: #7a5a1a; padding: 9px 18px; border-radius: 999px; box-shadow: 0 3px 0 #e6cf86;
+}
+.dream-overlay .wake-btn:active { transform: translateY(2px); box-shadow: 0 1px 0 #e6cf86; }
+.dream-stars { position: absolute; inset: 0; pointer-events: none; }
+.dream-stars span { position: absolute; color: #fff; opacity: 0.6; animation: dream-drift linear infinite; }
+@keyframes dream-float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
+@keyframes dream-drift { from { transform: translateY(30px); opacity: 0; } 20% { opacity: 0.6; } to { transform: translateY(-60px); opacity: 0; } }
+
+/* thinking indicator */
+.thinking { align-self: flex-end; display: inline-flex; gap: 4px; padding: 9px 12px; background: var(--sky); border-radius: 13px 13px 4px 13px; }
+.thinking i { width: 6px; height: 6px; border-radius: 50%; background: var(--sky-text); opacity: 0.4; animation: think-dots 1.2s infinite; }
+.thinking i:nth-child(2) { animation-delay: 0.2s; }
+.thinking i:nth-child(3) { animation-delay: 0.4s; }
+@keyframes think-dots { 0%, 60%, 100% { opacity: 0.3; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-3px); } }
+
+/* proactive glow (on the existing card) */
+.card.proactive { animation: proactive-glow 2.4s ease-in-out 2; }
+@keyframes proactive-glow { 0%, 100% { box-shadow: 0 0 0 0 rgba(95, 184, 127, 0); } 50% { box-shadow: 0 0 0 6px rgba(95, 184, 127, 0.18); } }
+
+/* mood pip (current affect, near the model) */
+.mood-pip {
+  position: absolute; top: 10px; left: 14px; z-index: 5; opacity: 0; transition: opacity 0.3s;
+  display: inline-flex; align-items: center; gap: 6px; background: #fff; color: var(--ink);
+  font-size: 12px; padding: 4px 10px; border-radius: 999px; box-shadow: 0 1px 4px rgba(90, 120, 160, 0.18);
+}
+.mood-pip.on { opacity: 1; }
+.mood-pip .emoji { font-size: 15px; }
+
+/* scroll-to-latest pill */
+.scroll-pill {
+  position: absolute; left: 50%; transform: translateX(-50%); bottom: 70px; z-index: 6; display: none;
+  align-items: center; gap: 4px; border: none; cursor: pointer; font: inherit; font-size: 12px;
+  background: var(--lavender); color: var(--lavender-text); padding: 5px 12px; border-radius: 999px;
+  box-shadow: 0 2px 6px rgba(90, 120, 160, 0.25);
+}
+.scroll-pill.on { display: inline-flex; }
+
+/* settings */
+.settings-btn {
+  position: absolute; top: 8px; right: 14px; z-index: 7; width: 30px; height: 30px; border-radius: 50%;
+  border: none; cursor: pointer; background: #fff; color: #5b7fa6; font-size: 15px;
+  box-shadow: 0 1px 4px rgba(90, 120, 160, 0.18);
+}
+.settings-panel {
+  position: absolute; top: 44px; right: 14px; z-index: 8; display: none; flex-direction: column; gap: 9px;
+  background: #fff; border-radius: 14px; padding: 12px 14px; min-width: 168px; font-size: 13px; color: var(--ink);
+  box-shadow: 0 4px 16px rgba(90, 120, 160, 0.25);
+}
+.settings-panel.on { display: flex; }
+.settings-panel label { display: flex; align-items: center; justify-content: space-between; gap: 10px; cursor: pointer; }
+.settings-panel .hint { font-size: 11px; color: var(--muted); }
+/* v0.27.1: the server-driven section — grows with the registry, so it scrolls, the panel doesn't */
+.server-settings { display: flex; flex-direction: column; gap: 8px; max-height: 46vh; overflow-y: auto; margin-top: 2px; padding-top: 6px; border-top: 1px dashed rgba(90, 120, 160, 0.25); }
+.server-settings:empty { display: none; }
+.settings-section { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); margin-top: 4px; }
+.setting-row span:first-child { display: flex; align-items: center; gap: 6px; }
+.setting-control { display: flex; align-items: center; gap: 6px; }
+.setting-input { width: 108px; font-size: 12px; padding: 3px 6px; border: 1px solid rgba(90, 120, 160, 0.35); border-radius: 8px; color: var(--ink); background: #fff; }
+.setting-input[type='number'] { width: 64px; }
+.setting-badge { font-size: 9px; letter-spacing: 0.06em; text-transform: uppercase; color: #b0802a; background: #fdf3dd; border-radius: 6px; padding: 1px 5px; }
+.setting-reset { border: none; background: none; cursor: pointer; color: var(--muted); font-size: 13px; padding: 0 2px; }
+.setting-reset:hover { color: var(--ink); }
+
+@media (prefers-reduced-motion: reduce) {
+  .model-placeholder, .dream-overlay .moon, .dream-stars span, .thinking i, .card.proactive { animation: none; }
+}
+.reduce-motion .model-placeholder,
+.reduce-motion .dream-overlay .moon,
+.reduce-motion .dream-stars span,
+.reduce-motion .thinking i,
+.reduce-motion .card.proactive { animation: none; }
+
+/* boot gate — voice warmup splash (blocks the page until GPT-SoVITS is warm) */
+.boot-gate {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(160deg, #eaf3ff 0%, #dce9fb 58%, #ece2fb 100%);
+  transition: opacity 0.4s ease;
+}
+.boot-gate.gone { opacity: 0; pointer-events: none; }
+.boot-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 9px;
+  padding: 34px 42px;
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 14px 44px rgba(120, 150, 210, 0.28);
+  text-align: center;
+  max-width: 320px;
+}
+.boot-moon { font-size: 46px; animation: boot-bob 2.4s ease-in-out infinite; }
+@keyframes boot-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-9px); } }
+.boot-spinner { display: flex; gap: 6px; margin: 2px 0 4px; }
+.boot-spinner i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #8fb7ff;
+  animation: boot-pulse 1.2s ease-in-out infinite;
+}
+.boot-spinner i:nth-child(2) { animation-delay: 0.2s; }
+.boot-spinner i:nth-child(3) { animation-delay: 0.4s; }
+@keyframes boot-pulse { 0%, 100% { opacity: 0.3; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1); } }
+.boot-title { font-size: 17px; font-weight: 700; color: #5a6b9a; }
+.boot-sub { font-size: 12px; color: #8a96b5; line-height: 1.5; }
+.boot-status { font-size: 13px; color: #6f7eaa; margin-top: 4px; min-height: 18px; }
+.boot-elapsed { font-size: 11px; color: #aab3cf; }
+.boot-skip {
+  margin-top: 12px;
+  padding: 6px 16px;
+  border: none;
+  border-radius: 14px;
+  background: rgba(143, 183, 255, 0.25);
+  color: #5a6b9a;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.boot-skip:hover { background: rgba(143, 183, 255, 0.45); }
+.reduce-motion .boot-moon, .reduce-motion .boot-spinner i { animation: none; }
+
+/* v0.25.0 (Initiative 18) + design review 2026-07-04: the beside-model speech bubbles. Each reply
+   pops on a RANDOM side of her head — two head-anchored zones (left/right of --luna-head-x, which
+   the sink republishes every frame in EVERY mode, so this works windowed / app / pet alike). Within
+   a zone the newest sits at head height, older ones push UP. pointer-events:none so it never blocks
+   the model's drag/gaze. */
+.speech-stack {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+  /* A size container so the bubbles can scale to the model area (cqmin below). Safe here — this is a
+     pointer-events:none overlay, so containment never touches the model/canvas layout. */
+  container-type: size;
+}
+.speech-zone {
+  position: absolute;
+  bottom: calc(100% - var(--luna-head-y, 30%));
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  /* Design review 2026-07-04: let long-text bubbles grow WIDE. The outer edge is pinned at the
+     model-stage edge, so width comes from the head-facing edge reaching closer to her — a reduced
+     gap (× 0.6) + a high side cap. */
+  max-width: 62%;
+}
+/* left of the head → bubbles hug the head-facing (right) edge */
+.speech-zone.left {
+  left: 8px;
+  right: calc(100% - var(--luna-head-x, 50%) + var(--luna-head-gap, 60px) * 0.6);
+  align-items: flex-end;
+}
+/* right of the head → bubbles hug the head-facing (left) edge */
+.speech-zone.right {
+  left: calc(var(--luna-head-x, 50%) + var(--luna-head-gap, 60px) * 0.6);
+  right: 8px;
+  align-items: flex-start;
+}
+.speech-bubble {
+  position: relative;
+  max-width: 38em;
+  /* Design review (2026-07-04): light-blue-white to match Luna's --sky palette instead of the
+     off-brand --lavender it borrowed; frosted (semi-opaque white + blur) so it stays legible
+     overlaid on the model art. */
+  background: rgba(255, 255, 255, 0.82);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  color: var(--sky-text);
+  border: 1px solid var(--lace);
+  /* Scale the whole bubble with the model area: font tracks cqmin (the smaller of the model-stage's
+     width/height, via the .speech-stack size container), everything else is em — so a small
+     pet/window gets a proportionally small bubble instead of a fixed 14px one that dwarfs her
+     (design review 2026-07-04). The px fallback covers engines without container-query units. */
+  font-size: 13px;
+  font-size: clamp(8px, 2.8cqmin, 14px);
+  border-radius: 1em;
+  padding: 0.55em 0.85em;
+  line-height: 1.45;
+  box-shadow: 0 6px 20px rgba(39, 73, 107, 0.18);
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 0.5s ease, transform 0.5s ease;
+  animation: speech-rise 0.28s ease;
+}
+/* The comic tail pokes from the bottom CORNER on the HEAD-facing side: bottom-right for a left-side
+   bubble (her head is to its right), bottom-left for a right-side bubble. Visible only on .latest —
+   dropping the class transitions the tail away as the bubble becomes history. */
+.speech-bubble::after {
+  content: '';
+  position: absolute;
+  bottom: -0.28em;
+  width: 0.9em;
+  height: 0.9em;
+  background: rgba(255, 255, 255, 0.82);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  border-radius: 0 0 0.2em 0;
+  transform-origin: center;
+  transform: rotate(45deg) scale(0.3);
+  opacity: 0;
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+.speech-bubble.side-left::after {
+  right: -0.28em;
+  border-right: 1px solid var(--lace);
+  border-bottom: 1px solid var(--lace);
+}
+.speech-bubble.side-right::after {
+  left: -0.28em;
+  border-left: 1px solid var(--lace);
+  border-bottom: 1px solid var(--lace);
+}
+.speech-bubble.latest::after {
+  opacity: 1;
+  transform: rotate(45deg) scale(1);
+}
+.speech-bubble.fading {
+  opacity: 0;
+  transform: translateY(-6px);
+}
+@keyframes speech-rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.reduce-motion .speech-bubble,
+.reduce-motion .speech-bubble::after { animation: none; transition: none; }
+@media (prefers-reduced-motion: reduce) {
+  .speech-bubble,
+  .speech-bubble::after { animation: none; transition: none; }
+}
+
+/* v0.25.1 (Initiative 18): collapsed companion mode — the chat window folds into a floating bottom
+   input bar; the chat-panel leaves the flex flow so .model-stage (flex:1) grows to full width and
+   the model re-centers (via the resize dispatch; v0.25.2 makes that a glide). */
+.collapse-btn {
+  flex: none;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--ink-soft);
+  font-size: 17px;
+  line-height: 1;
+  padding: 4px 7px;
+  border-radius: 999px;
+}
+.collapse-btn:hover {
+  color: var(--ink);
+  background: rgba(185, 212, 239, 0.35);
+}
+.luna-app.collapsed .chat-panel {
+  position: fixed;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  flex: none;
+  width: min(560px, 92vw);
+  padding: 0;
+  background: none;
+  box-shadow: none;
+  z-index: 6;
+}
+.luna-app.collapsed .chat-header,
+.luna-app.collapsed .chat-log,
+.luna-app.collapsed .scroll-pill,
+.luna-app.collapsed .chat-panel .puff {
+  display: none;
+}
+/* collapsed + narrow: let the model fill the freed column instead of the 210px mobile band */
+@media (max-width: 720px) {
+  .luna-app.collapsed .model-stage {
+    flex: 1 1 auto;
+  }
+}
+.luna-app.collapsed .chat-input-row {
+  margin: 0;
+  background: var(--inner);
+  border: 1px solid var(--inner-border);
+  border-radius: 999px;
+  padding: 8px 10px;
+  box-shadow: 0 8px 26px rgba(39, 73, 107, 0.2);
+  animation: bar-rise 0.34s ease;
+}
+@keyframes bar-rise {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+/* reduce-motion sits on the SAME root element as .luna-app — a compound selector, never a descendant */
+.luna-app.reduce-motion.collapsed .chat-input-row { animation: none; }
+@media (prefers-reduced-motion: reduce) {
+  .luna-app.collapsed .chat-input-row { animation: none; }
+}
+
+/* v0.26.2 (Initiative 19): pet mode — the desktop shell's transparent window. Only Luna, her
+   bubbles, and the pill bar exist; the room (stripes/lace/motifs/status) disappears so the
+   desktop shows through. */
+body.pet { background: none; }
+.luna-app.pet .lace-top,
+.luna-app.pet .lace-bottom,
+.luna-app.pet .motif-layer,
+.luna-app.pet .status-badge {
+  display: none;
+}
+
+/* v0.28.0: first-run setup screen (desktop shell, ?setup=1) */
+.luna-app.setup {
+  display: flex; align-items: center; justify-content: center; min-height: 100vh;
+  background: repeating-linear-gradient(90deg, #e4eef9 0, #e4eef9 16px, #f5f9fd 16px, #f5f9fd 32px);
+}
+.setup-card {
+  display: flex; flex-direction: column; gap: 12px; width: min(420px, 92vw);
+  background: #fff; border-radius: 18px; padding: 26px 28px; color: var(--ink);
+  box-shadow: 0 8px 30px rgba(90, 120, 160, 0.22);
+}
+.setup-title { font-size: 20px; font-weight: 700; color: var(--ink); }
+.setup-sub { font-size: 12px; color: var(--muted); margin-top: -6px; margin-bottom: 4px; }
+.setup-field { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--ink-soft); }
+.setup-field input {
+  font: inherit; font-size: 13px; color: var(--ink); padding: 9px 11px; border-radius: 10px;
+  border: 1px solid rgba(90, 120, 160, 0.3); outline: none; background: #fff;
+}
+.setup-field input:focus { border-color: #7fa8d8; }
+.setup-status { font-size: 12px; min-height: 16px; }
+.setup-status[data-kind='error'] { color: #c9556b; }
+.setup-status[data-kind='ok'] { color: #4a9b6e; }
+.setup-status[data-kind='info'] { color: var(--muted); }
+.setup-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 6px; }
+.setup-btn {
+  font: inherit; font-size: 13px; font-weight: 600; padding: 9px 18px; border-radius: 11px;
+  border: none; cursor: pointer; background: #7fa8d8; color: #fff;
+}
+.setup-btn.ghost { background: #eef3f9; color: var(--ink-soft); }
+.setup-btn:disabled { opacity: 0.55; cursor: default; }
+
+/* v0.28.6: NO -webkit-app-region rules — on transparent frameless windows the drag region ate
+   every mousedown before the DOM saw it (nothing inside the pet was clickable). Window-move is
+   now manual: app.ts pointer-drags her body via the lunaPet.drag* bridge; clicks stay ordinary. */

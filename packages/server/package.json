@@ -1,0 +1,27 @@
+{
+  "name": "@luna/server",
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/Alan-Yu-2077/Luna-ts.git", "directory": "packages/server" },
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/main.ts",
+  "scripts": {
+    "dev": "bun --hot src/main.ts",
+    "start": "bun src/main.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "0.104.1",
+    "@luna/protocol": "workspace:*",
+    "@mozilla/readability": "^0.6.0",
+    "linkedom": "^0.18.12",
+    "sqlite-vec": "0.1.9",
+    "turndown": "^7.2.4",
+    "web-tree-sitter": "0.26.9",
+    "zod": "^3.25.0",
+    "zod-to-json-schema": "^3.25"
+  },
+  "devDependencies": {
+    "@types/turndown": "^5.0.6"
+  }
+}

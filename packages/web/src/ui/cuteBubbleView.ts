@@ -1,0 +1,182 @@
+import type { BubbleView, ChipKind, HistoryTurnView } from '../bubbles';
+import { messageSegments, safeHttpHref } from '../bubbles';
+import { absoluteStamp, relativeTime } from './time';
+import { toolCardLabel } from './toolLabels';
+
+// The cute UI's BubbleView. Luna's message bubbles (right) + tool/dream/proactive
+// cards come from the controller; the app calls userMessage() for the user echo
+// (left). v0.13.4 adds a thinking indicator and a scroll-to-latest pill (auto-
+// scroll only when already at the bottom).
+
+type Role = 'user' | 'luna';
+type Bubble = { row: HTMLElement; body: HTMLElement };
+
+export class CuteBubbleView implements BubbleView {
+  private readonly bubbles = new Map<string, Bubble>();
+  private thinkingEl: HTMLElement | null = null;
+
+  constructor(
+    private readonly host: HTMLElement,
+    private readonly scrollPill?: HTMLButtonElement,
+  ) {
+    this.scrollPill?.addEventListener('click', () => this.scrollToBottom());
+  }
+
+  private make(role: Role): Bubble {
+    const doc = this.host.ownerDocument;
+    const row = doc.createElement('div');
+    row.className = `bubble-row ${role}`;
+    const body = doc.createElement('div');
+    body.className = `bubble ${role}`;
+    row.appendChild(body);
+    return { row, body };
+  }
+
+  private stamp(row: HTMLElement, ms: number): void {
+    const ts = this.host.ownerDocument.createElement('div');
+    ts.className = 'ts';
+    ts.dataset['ts'] = `${ms}`;
+    ts.title = absoluteStamp(ms);
+    ts.textContent = relativeTime(ms, ms);
+    row.appendChild(ts);
+  }
+
+  private atBottom(): boolean {
+    return this.host.scrollHeight - this.host.scrollTop - this.host.clientHeight < 48;
+  }
+  private scroll(): void {
+    if (this.atBottom()) this.scrollToBottom();
+    else this.scrollPill?.classList.add('on');
+  }
+  scrollToBottom(): void {
+    this.host.scrollTop = this.host.scrollHeight;
+    this.scrollPill?.classList.remove('on');
+  }
+
+  // Driven by the controller for the WHOLE turn (v0.21.9): re-appending an existing
+  // dots element moves it to the end (below any chip added since) WITHOUT recreating
+  // the node, so the CSS bounce keeps running uninterrupted — "持续跳跃".
+  setThinking(on: boolean): void {
+    if (on) this.showThinking();
+    else this.hideThinking();
+  }
+  showThinking(): void {
+    if (!this.thinkingEl) {
+      const doc = this.host.ownerDocument;
+      const el = doc.createElement('div');
+      el.className = 'thinking';
+      for (let i = 0; i < 3; i++) el.appendChild(doc.createElement('i'));
+      this.thinkingEl = el;
+    }
+    // reflectTyping() calls this on nearly every event of a multi-step turn, so only
+    // (re)append + scroll when the dots aren't already the last child — otherwise we
+    // would yank the viewport on every event. Use the gated scroll() so a user who
+    // has scrolled up to read isn't dragged back to the bottom (v0.21.9 review).
+    if (this.host.lastElementChild !== this.thinkingEl) {
+      this.host.appendChild(this.thinkingEl);
+      this.scroll();
+    }
+  }
+  hideThinking(): void {
+    this.thinkingEl?.remove();
+    this.thinkingEl = null;
+  }
+
+  open(id: string): void {
+    if (this.bubbles.has(id)) return;
+    const b = this.make('luna');
+    this.bubbles.set(id, b);
+    this.host.appendChild(b.row);
+    this.scroll();
+  }
+
+  append(id: string, text: string): void {
+    let b = this.bubbles.get(id);
+    if (!b) {
+      this.open(id);
+      b = this.bubbles.get(id)!;
+    }
+    b.body.textContent += text;
+    this.scroll();
+  }
+
+  finalize(id: string, text: string): void {
+    let b = this.bubbles.get(id);
+    if (!b) {
+      this.open(id);
+      b = this.bubbles.get(id)!;
+    }
+    b.body.textContent = text;
+    this.stamp(b.row, Date.now());
+    this.bubbles.delete(id);
+    this.scroll();
+  }
+
+  discard(id: string): void {
+    const b = this.bubbles.get(id);
+    if (b) b.row.remove();
+    this.bubbles.delete(id);
+  }
+
+  chip(kind: ChipKind, text: string, href?: string): void {
+    const safe = kind === 'source' && href ? safeHttpHref(href) : null;
+    if (safe) {
+      const a = this.host.ownerDocument.createElement('a');
+      a.className = `card ${kind}`;
+      a.textContent = text;
+      a.href = safe;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      this.host.appendChild(a);
+      this.scroll();
+      return;
+    }
+    const card = this.host.ownerDocument.createElement('div');
+    card.className = `card ${kind}`;
+    card.textContent = kind === 'tool' ? toolCardLabel(text) : text;
+    this.host.appendChild(card);
+    this.scroll();
+  }
+
+  renderHistory(turns: ReadonlyArray<HistoryTurnView>): void {
+    // Clear + rerender so it's idempotent across reconnects (the server resends
+    // the full persisted history on every WS open).
+    this.hideThinking();
+    this.bubbles.clear();
+    while (this.host.firstChild) this.host.removeChild(this.host.firstChild);
+    for (const t of turns) {
+      if (t.userText) {
+        const u = this.make('user');
+        u.body.textContent = t.userText;
+        this.host.appendChild(u.row);
+        this.stamp(u.row, t.tMs);
+      }
+      // One bubble per message the turn delivered (v0.21.10) — a multi-message turn
+      // was newline-joined into assistant_text, so render it back as separate bubbles
+      // instead of one merged block, matching how it looked live.
+      for (const seg of t.assistantText ? messageSegments(t.assistantText) : []) {
+        const l = this.make('luna');
+        l.body.textContent = seg;
+        this.host.appendChild(l.row);
+        this.stamp(l.row, t.tMs);
+      }
+    }
+    if (turns.length) {
+      const div = this.host.ownerDocument.createElement('div');
+      div.className = 'history-divider';
+      div.textContent = '— earlier conversation —';
+      div.style.cssText =
+        'text-align:center;font-size:11px;opacity:0.5;margin:10px 0 4px;letter-spacing:1px;';
+      this.host.appendChild(div);
+    }
+    this.scrollToBottom();
+  }
+
+  userMessage(text: string): void {
+    const b = this.make('user');
+    b.body.textContent = text;
+    this.host.appendChild(b.row);
+    this.stamp(b.row, Date.now());
+    this.scrollToBottom();
+  }
+}
