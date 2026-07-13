@@ -2,7 +2,7 @@
 
 <img src="docs/assets/icon.png" width="108" alt="Luna" />
 
-# Luna
+# Luna-ts
 
 **住在你桌面上的 AI 伙伴——她有记忆、有感知、能做事、会说话。**
 
