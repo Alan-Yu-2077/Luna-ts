@@ -1,15 +1,33 @@
-import { app, BrowserWindow, dialog, ipcMain, session } from 'electron';
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { app, BrowserWindow, dialog, ipcMain, session, shell } from 'electron';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { join, sep } from 'node:path';
 import { defaultDistDir, startWebHost, WEB_PORT } from './serve';
+import { readTtsEnv } from '../../web/src/tts/apiV2';
 import { ENV_TEMPLATE, parseEnvFile } from './envfile';
 import { readShellSettings, writeShellSettings } from './shellSettings';
-import { classifyProbe, mergeEnvFile, needsOnboarding, type ProbeVerdict } from './onboarding';
+import {
+  classifyProbe,
+  filterWizardFields,
+  mergeEnvFile,
+  needsOnboarding,
+  wizardFlagEnabled,
+  type ProbeVerdict,
+} from './onboarding';
 import { formatLatLon, resolveDesktopLocation } from './location';
 import { createPetDrag, type PetDrag } from './petDrag';
 import { petWindowOptions } from './petWindow';
 import { createSupervisor, waitForPort, type Supervisor } from './supervisor';
 import { resolveDevLauncher, resolveSidecarDb, shouldAttach } from './backend';
+import { probeEmbedding, probeSearch, probeWeather } from './probes';
+import { installModelFolder } from './modelInstall';
+import {
+  generateTtsYaml,
+  installVoicePack,
+  scanVoicePack,
+  startCommand,
+  validateRuntimeDir,
+  validateVoicePack,
+} from './voicePack';
 
 // v0.26.1 (Initiative 19): the single-machine app. The shell OWNS the whole runtime: it reads the
 // user's keys from app-data (never the bundle), spawns the compiled luna-server sidecar against an
@@ -87,6 +105,17 @@ function currentLunaConfig(): { modelUrl?: string; ttsBackend?: string; ttsUrl?:
   return { modelUrl: env['LUNA_MODEL_URL'], ttsBackend: env['LUNA_TTS_BACKEND'], ttsUrl: env['LUNA_TTS_URL'] };
 }
 
+// v0.35.4 (Initiative 25 close): the wizard is the DEFAULT setup experience; LUNA_SETUP_WIZARD=0 is
+// the one-release escape hatch to the v0.28 single card. Read fresh (like currentLunaConfig) so a
+// luna.env flip applies on the next setup-window load — the v0.34.15 lesson: the main process's
+// process.env never carries luna.env values by itself.
+function wizardEnabled(): boolean {
+  const env: Record<string, string | undefined> = paths
+    ? { ...process.env, ...parseEnvFile(readFileSync(paths.envFile, 'utf8')) }
+    : process.env;
+  return wizardFlagEnabled(env['LUNA_SETUP_WIZARD']);
+}
+
 function sidecarEnv(p: Paths, userEnv: Record<string, string>): Record<string, string> {
   const env: Record<string, string> = {
     // PATH etc. for the child; the user's keys OVERRIDE inherited vars, never the reverse.
@@ -111,6 +140,9 @@ function sidecarEnv(p: Paths, userEnv: Record<string, string>): Record<string, s
 
 let supervisor: Supervisor | null = null;
 let paths: Paths | null = null;
+// v0.35.0: true when we ATTACHED to an already-running backend (bun run dev) — the wizard submit
+// must not "restart" a sidecar we never started (it would race the external server for the port).
+let attachedToExternal = false;
 
 // Bun inlines __dirname as the SOURCE dir (packages/desktop/src) at compile time (see the preload
 // note below), so the repo root — where scripts/ lives — is three up (used by the dev launcher).
@@ -151,6 +183,12 @@ function createWindow(mode: 'app' | 'setup' = 'app'): BrowserWindow {
   });
   win.webContents.on('preload-error', (_e, path, error) => {
     console.error(`[luna-desktop] PRELOAD ERROR at ${path}: ${error.message}`);
+  });
+  // v0.35.4: the wizard's walkthrough cards link vendor consoles + resource pages. Those must open
+  // in the system browser, never as a bare Electron child window (and non-https never opens at all).
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith('https://')) void shell.openExternal(url);
+    return { action: 'deny' };
   });
   if (usePet) {
     win.setAlwaysOnTop(true, 'floating');
@@ -241,6 +279,19 @@ ipcMain.handle('luna:onboarding-probe', async (_event, raw: OnboardingFields) =>
   return probeConnection(asStr(raw?.baseUrl), asStr(raw?.apiKey), asStr(raw?.model));
 });
 
+// v0.35.1: the wizard's optional-step probes. Main-process-side like the chat probe — the key rides
+// one IPC direction and only the {ok, error?} verdict returns.
+type ProviderFields = Record<string, unknown>;
+ipcMain.handle('luna:probe-embedding', async (_event, raw: ProviderFields) =>
+  probeEmbedding({ baseUrl: asStr(raw?.['baseUrl']), apiKey: asStr(raw?.['apiKey']), model: asStr(raw?.['model']) }),
+);
+ipcMain.handle('luna:probe-search', async (_event, raw: ProviderFields) =>
+  probeSearch({ apiKey: asStr(raw?.['apiKey']) }),
+);
+ipcMain.handle('luna:probe-weather', async (_event, raw: ProviderFields) =>
+  probeWeather({ apiKey: asStr(raw?.['apiKey']), apiHost: asStr(raw?.['apiHost']) }),
+);
+
 ipcMain.handle('luna:onboarding-submit', async (_event, raw: OnboardingFields): Promise<ProbeVerdict> => {
   if (!paths) return { ok: false, error: 'Not ready — try again in a moment.' };
   if (onboardingInFlight) return { ok: false, error: 'Setup already in progress…' };
@@ -277,24 +328,168 @@ ipcMain.on('luna:get-config', (event) => {
   event.returnValue = currentLunaConfig();
 });
 
-// "Choose model folder…": pick a Live2D model dir, verify it has a *.model3.json, copy it into
-// userData/models, persist LUNA_MODEL_URL, and reload so the preload re-injects window.lunaConfig.
-ipcMain.handle('luna:choose-model', async (): Promise<{ ok: boolean; modelUrl?: string; error?: string }> => {
+ipcMain.on('luna:wizard-enabled', (event) => {
+  event.returnValue = wizardEnabled();
+});
+
+// v0.35.0: re-enter setup from the Settings panel. One setup window at most — focus an existing one
+// instead of stacking a second.
+ipcMain.on('luna:open-setup', () => {
+  const existing = BrowserWindow.getAllWindows().find((w) => w.webContents.getURL().includes('setup=1'));
+  if (existing) {
+    existing.focus();
+    return;
+  }
+  createWindow('setup');
+});
+
+// v0.35.0: the wizard's wide submit — every step's collected fields in ONE call, whitelisted
+// (filterWizardFields drops anything the wizard doesn't manage), chat probe-first when chat fields
+// are present (a bad key is never persisted, v0.28.0 rule), ONE luna.env merge + ONE sidecar
+// restart at the end. Values ride this one direction; the verdict never echoes them.
+ipcMain.handle('luna:wizard-submit', async (_event, raw: unknown): Promise<ProbeVerdict> => {
   if (!paths) return { ok: false, error: 'Not ready — try again in a moment.' };
+  if (onboardingInFlight) return { ok: false, error: 'Setup already in progress…' };
+  onboardingInFlight = true;
+  try {
+    const fields = filterWizardFields(raw);
+    const baseUrl = fields['ANTHROPIC_BASE_URL'];
+    const apiKey = fields['ANTHROPIC_API_KEY'];
+    if (baseUrl !== undefined || apiKey !== undefined) {
+      if (!baseUrl || !apiKey) return { ok: false, error: 'Enter a base URL and an API key.' };
+      const verdict = await probeConnection(baseUrl, apiKey, fields['LUNA_MODEL'] ?? '');
+      if (!verdict.ok) return verdict;
+    }
+    const merged = mergeEnvFile(readFileSync(paths.envFile, 'utf8'), fields);
+    writeFileSync(paths.envFile, merged);
+    // Attached to an externally-started backend (bun run dev): its keys come from the repo .env,
+    // not luna.env — write only, no sidecar to restart. Shell-read values (model/tts) still apply
+    // via the window swap below.
+    if (!attachedToExternal) {
+      supervisor?.restart(sidecarEnv(paths, parseEnvFile(merged)));
+      const up = await waitForPort(SERVER_PORT);
+      if (!up) return { ok: false, error: 'Saved, but the server did not start. Check the logs.' };
+    }
+    const fresh = createWindow('app');
+    for (const w of BrowserWindow.getAllWindows()) if (w !== fresh) w.close();
+    return { ok: true };
+  } finally {
+    onboardingInFlight = false;
+  }
+});
+
+// v0.35.2: model install goes through ONE shared core (modelInstall.ts) — the picker and the
+// wizard's drag-and-drop are just two entrances. On success, reload only NON-setup windows: the
+// app window must re-inject lunaConfig so the model renders, but reloading the setup window would
+// blow the wizard back to step 1 (a v0.35.0 flow bug this version fixes).
+function installModelAndReload(src: string): { ok: boolean; modelUrl?: string; error?: string } {
+  if (!paths) return { ok: false, error: 'Not ready — try again in a moment.' };
+  const result = installModelFolder(src, { modelsDir: paths.userModelsDir, envFile: paths.envFile });
+  if (result.ok) {
+    for (const w of BrowserWindow.getAllWindows()) {
+      if (!w.webContents.getURL().includes('setup=1')) w.reload();
+    }
+  }
+  return result;
+}
+
+// "Choose model folder…": pick a Live2D model dir via the native dialog.
+ipcMain.handle('luna:choose-model', async (): Promise<{ ok: boolean; modelUrl?: string; error?: string }> => {
   const picked = dialog.showOpenDialogSync({
     title: 'Choose a Live2D model folder',
     properties: ['openDirectory'],
   });
   const src = picked?.[0];
   if (!src) return { ok: false, error: 'cancelled' };
-  const manifest = readdirSync(src).find((f) => f.endsWith('.model3.json'));
-  if (!manifest) return { ok: false, error: 'No .model3.json found in that folder.' };
-  const name = basename(src);
-  cpSync(src, join(paths.userModelsDir, name), { recursive: true });
-  const modelUrl = `/models/${name}/${manifest}`;
-  writeFileSync(paths.envFile, mergeEnvFile(readFileSync(paths.envFile, 'utf8'), { LUNA_MODEL_URL: modelUrl }));
-  for (const w of BrowserWindow.getAllWindows()) w.reload(); // re-inject lunaConfig → the model renders
-  return { ok: true, modelUrl };
+  return installModelAndReload(src);
+});
+
+// v0.35.2: the wizard drop zone — the preload resolves the dropped File to a real path
+// (webUtils.getPathForFile) and only the path string crosses IPC.
+ipcMain.handle('luna:install-model-path', async (_event, raw: unknown) => {
+  const src = asStr(raw);
+  if (!src) return { ok: false, error: 'No folder received.' };
+  return installModelAndReload(src);
+});
+
+// ── v0.35.3: the voice-pack flow (canonical GPT-SoVITS standard) ──────────────────────────────────
+
+ipcMain.handle('luna:scan-voice-pack', async (_event, raw: unknown) => {
+  const root = asStr(raw);
+  if (!root || !existsSync(root) || !statSync(root).isDirectory())
+    return { ok: false, error: 'That is not a folder.' };
+  const scan = scanVoicePack(root);
+  const valid = validateVoicePack(scan);
+  if (!valid.ok) return valid;
+  // Prefill the transcript textarea when the pack ships one (reference clips usually do).
+  let transcriptPreview = '';
+  const firstTxt = scan.transcripts[0];
+  if (firstTxt) {
+    try {
+      transcriptPreview = readFileSync(firstTxt, 'utf8').trim().slice(0, 500);
+    } catch {
+      /* unreadable transcript — the user types it instead */
+    }
+  }
+  return { ok: true, root, scan, transcriptPreview };
+});
+
+ipcMain.handle('luna:choose-tts-runtime', async () => {
+  const picked = dialog.showOpenDialogSync({
+    title: 'Choose your GPT-SoVITS folder',
+    properties: ['openDirectory'],
+  });
+  const dir = picked?.[0];
+  if (!dir) return { ok: false, error: 'cancelled' };
+  const check = validateRuntimeDir(dir);
+  if (!check.ok) return check;
+  return { ok: true, dir, venv: !!check.venvPython };
+});
+
+type VoiceInstallRaw = Record<string, unknown>;
+ipcMain.handle('luna:install-voice-pack', async (_event, raw: VoiceInstallRaw) => {
+  if (!paths) return { ok: false, error: 'Not ready — try again in a moment.' };
+  const root = asStr(raw?.['root']);
+  const picks = {
+    gptCkpt: asStr(raw?.['gptCkpt']),
+    sovitsPth: asStr(raw?.['sovitsPth']),
+    referenceWav: asStr(raw?.['referenceWav']),
+    ...(asStr(raw?.['transcriptTxt']) !== '' ? { transcriptTxt: asStr(raw?.['transcriptTxt']) } : {}),
+  };
+  // The picks must come from the scanned pack — a stray absolute path can't smuggle files in.
+  const inRoot = (p: string): boolean => p === '' || p.startsWith(root.endsWith(sep) ? root : root + sep);
+  if (!root || !inRoot(picks.gptCkpt) || !inRoot(picks.sovitsPth) || !inRoot(picks.referenceWav))
+    return { ok: false, error: 'Picked files must come from the dropped folder — re-scan it.' };
+  const installed = installVoicePack(root, picks, {
+    ttsDir: join(paths.userData, 'tts'),
+    envFile: paths.envFile,
+    promptText: asStr(raw?.['promptText']),
+    promptLang: asStr(raw?.['promptLang']),
+    textLang: asStr(raw?.['textLang']),
+  });
+  if (!installed.ok || !installed.packDir || !installed.gptCkpt || !installed.sovitsPth) return installed;
+
+  // With a validated GPT-SoVITS checkout we can produce the exact runtime config + launch command
+  // (the reference-instance form). Without one, the weights are installed and luna.env is set —
+  // the user picks the runtime later and re-installs to get the command.
+  const runtimeDir = asStr(raw?.['runtimeDir']);
+  let command: string | undefined;
+  let yamlPath: string | undefined;
+  if (runtimeDir !== '') {
+    const check = validateRuntimeDir(runtimeDir);
+    if (!check.ok) return { ok: false, error: check.error };
+    yamlPath = join(installed.packDir, 'tts_infer.runtime.yaml');
+    writeFileSync(
+      yamlPath,
+      generateTtsYaml({ checkout: runtimeDir, gptCkpt: installed.gptCkpt, sovitsPth: installed.sovitsPth }),
+    );
+    command = startCommand({ checkout: runtimeDir, yamlPath, ...(check.venvPython ? { venvPython: check.venvPython } : {}) });
+    writeFileSync(
+      paths.envFile,
+      mergeEnvFile(readFileSync(paths.envFile, 'utf8'), { LUNA_TTS_RUNTIME_DIR: runtimeDir }),
+    );
+  }
+  return { ok: true, refAudio: installed.refAudio, command, yamlPath };
 });
 
 async function smokeProbe(win: BrowserWindow): Promise<void> {
@@ -398,10 +593,17 @@ void app.whenReady().then(async () => {
   if (userEnv['LUNA_PET_MODE'] === '1') petMode = true;
   const shell = readShellSettings(p.userData);
   if (typeof shell.petMode === 'boolean') petMode = shell.petMode;
-  // Voice is bring-your-own: the static host forwards /api/tts/* to a GPT-SoVITS api_v2 backend read
-  // from env (LUNA_TTS_URL). Unset → the forward 502s and the app runs voiceless / with browser voice.
-  // It also serves any picker-installed model from userData/models (undefined ttsEnv → env default).
-  startWebHost(p.webDist, WEB_PORT, undefined, p.userModelsDir);
+  // Voice is bring-your-own: the static host forwards /api/tts/* to a GPT-SoVITS api_v2 backend. The
+  // upstream config lives in luna.env — NOT in this process's process.env (the v0.34.15 lesson) — so
+  // it's threaded in as a per-request GETTER (v0.35.3): a wizard voice-pack install or a hand edit
+  // applies on the very next /api/tts call, no host restart. Unset → the forward 502s and the app
+  // runs voiceless / with browser voice. It also serves any picker-installed model from userData/models.
+  startWebHost(
+    p.webDist,
+    WEB_PORT,
+    () => readTtsEnv({ ...process.env, ...parseEnvFile(readFileSync(p.envFile, 'utf8')) }),
+    p.userModelsDir,
+  );
   supervisor = createSupervisor({
     command: p.serverBin,
     env: sidecarEnv(p, userEnv),
@@ -415,6 +617,7 @@ void app.whenReady().then(async () => {
   // either way, so both paths land on the same backend + DB.
   const attached = shouldAttach({ portListening: await waitForPort(SERVER_PORT, 800), smoke: SMOKE });
   if (attached) {
+    attachedToExternal = true;
     console.log(`[luna-desktop] attaching to existing backend on 127.0.0.1:${SERVER_PORT}`);
     createWindow();
     app.on('activate', () => {
@@ -482,12 +685,35 @@ void app.whenReady().then(async () => {
       detail: `No response on 127.0.0.1:${SERVER_PORT}. Check ${p.envFile} and the logs.`,
     });
   }
-  const win = createWindow();
-  if (SMOKE) void smokeProbe(win);
+  // v0.35.4: LUNA_SMOKE_SETUP probes the WIZARD in the packaged shell (fresh-machine E2E for the
+  // default-on flip) instead of the app window.
+  const smokeSetup = SMOKE && process.env['LUNA_SMOKE_SETUP'] === '1';
+  const win = createWindow(smokeSetup ? 'setup' : 'app');
+  if (SMOKE) void (smokeSetup ? smokeSetupProbe(win) : smokeProbe(win));
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
+
+// The wizard go/no-go: the packaged setup window mounts the six-step wizard (default-on flag), the
+// first step is the chat card, and the language toggle is live. Asserted from the real bundle.
+async function smokeSetupProbe(win: BrowserWindow): Promise<void> {
+  await new Promise((r) => setTimeout(r, 4000));
+  const probe = (await win.webContents.executeJavaScript(
+    `(() => JSON.stringify({
+      wizard: !!document.querySelector('.setup-card.wizard'),
+      dots: document.querySelectorAll('.wizard-dot').length,
+      step: document.querySelector('.wizard-step-title')?.textContent || null,
+      guide: !!document.querySelector('.wizard-guide'),
+      langBtn: !!document.querySelector('.setup-lang-btn'),
+    }))()`,
+  )) as string;
+  const p = JSON.parse(probe) as { wizard: boolean; dots: number; step: string | null; guide: boolean; langBtn: boolean };
+  const ok = p.wizard && p.dots === 6 && !!p.step && p.guide && p.langBtn;
+  console.log(JSON.stringify({ ok, ...p }));
+  supervisor?.stop();
+  app.exit(ok ? 0 : 1);
+}
 
 // Kill the sidecar on every exit path — an orphan luna-server would hold the port + the DB lock.
 app.on('before-quit', () => {

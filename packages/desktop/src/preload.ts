@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
 // v0.26.2: the pet-mode bridge — the renderer hit-tests the cursor (petHitTest.ts) and tells the
 // shell whether the window should take the mouse or pass clicks through to the desktop. The only
@@ -27,6 +27,10 @@ contextBridge.exposeInMainWorld('lunaPet', {
   // it into userData/models, writes LUNA_MODEL_URL, and reloads. Returns {ok, modelUrl?} | {ok:false}.
   chooseModel: (): Promise<{ ok: boolean; modelUrl?: string; error?: string }> =>
     ipcRenderer.invoke('luna:choose-model'),
+  // v0.35.2: the wizard drop zone. Electron 33 removed File.path — the real path is resolved HERE
+  // (webUtils needs the preload context) and only the path string crosses IPC.
+  installModelFile: (file: File): Promise<{ ok: boolean; modelUrl?: string; error?: string }> =>
+    ipcRenderer.invoke('luna:install-model-path', webUtils.getPathForFile(file)),
 });
 
 // Inject the desktop-resolved config (LUNA_MODEL_URL / LUNA_TTS_BACKEND / LUNA_TTS_URL) so the renderer
@@ -48,4 +52,31 @@ contextBridge.exposeInMainWorld('lunaSetup', {
     ipcRenderer.invoke('luna:onboarding-probe', fields),
   submit: (fields: SetupFields): Promise<SetupVerdict> =>
     ipcRenderer.invoke('luna:onboarding-submit', fields),
+  // v0.35.0: the multi-step wizard. `wizard` advertises the LUNA_SETUP_WIZARD flag (renderer picks
+  // the wizard vs the legacy card); wizardSubmit carries the whole whitelisted field map one way —
+  // the verdict never echoes a value. openSetup re-enters setup from the Settings panel.
+  wizard: ipcRenderer.sendSync('luna:wizard-enabled') === true,
+  wizardSubmit: (fields: Record<string, string>): Promise<SetupVerdict> =>
+    ipcRenderer.invoke('luna:wizard-submit', fields),
+  openSetup: (): void => {
+    ipcRenderer.send('luna:open-setup');
+  },
+  // v0.35.1: optional-step probes (embedding / search / weather). The kind is pinned to three fixed
+  // channels here — the renderer cannot aim this at an arbitrary IPC name.
+  probeProvider: (
+    kind: 'embedding' | 'search' | 'weather',
+    fields: Record<string, string>,
+  ): Promise<SetupVerdict> => {
+    const channel =
+      kind === 'embedding' ? 'luna:probe-embedding' : kind === 'search' ? 'luna:probe-search' : 'luna:probe-weather';
+    return ipcRenderer.invoke(channel, fields);
+  },
+  // v0.35.3: the voice-pack flow. Same webUtils path handoff as the model drop; scan → the user
+  // confirms picks/transcript → install copies weights + writes luna.env + generates the api_v2
+  // config and launch command (canonical GPT-SoVITS standard). Nothing from the pack is executed.
+  scanVoicePack: (file: File): Promise<Record<string, unknown>> =>
+    ipcRenderer.invoke('luna:scan-voice-pack', webUtils.getPathForFile(file)),
+  installVoicePack: (args: Record<string, string>): Promise<Record<string, unknown>> =>
+    ipcRenderer.invoke('luna:install-voice-pack', args),
+  chooseTtsRuntime: (): Promise<Record<string, unknown>> => ipcRenderer.invoke('luna:choose-tts-runtime'),
 });

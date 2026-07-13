@@ -11,6 +11,12 @@ export function needsOnboarding(userEnv: Record<string, string>): boolean {
   return !key || key.trim() === '' || key === PLACEHOLDER_KEY;
 }
 
+// v0.35.4: the wizard is the default first-run experience; LUNA_SETUP_WIZARD=0 is the one-release
+// escape hatch back to the v0.28 single card (delete plan: the release after Initiative 25 ships).
+export function wizardFlagEnabled(value: string | undefined): boolean {
+  return value !== '0';
+}
+
 // Line-preserving merge into an existing luna.env: replace the value of an already-present
 // (uncommented) KEY= line in place, append a KEY=value for a missing one, and leave every other
 // line — comments, blanks, unrelated keys — exactly as it was. A re-run must never clobber the
@@ -44,6 +50,45 @@ export function mergeEnvFile(existing: string, fields: Record<string, string>): 
     out.push('', ...appended, '');
   }
   return out.join('\n');
+}
+
+// v0.35.0: the exact set of luna.env keys the setup wizard may write. mergeEnvFile writes whatever
+// it is handed, so this whitelist is the defense-in-depth boundary between the renderer-collected
+// field map and the config file — anything outside it is silently dropped, never persisted.
+export const WIZARD_KEYS = [
+  'ANTHROPIC_BASE_URL',
+  'ANTHROPIC_API_KEY',
+  'LUNA_MODEL',
+  'LUNA_EMBEDDING_MODEL',
+  'LUNA_EMBEDDING_API_KEY',
+  'LUNA_EMBEDDING_BASE_URL',
+  'LUNA_WEB_SEARCH_PROVIDER',
+  'LUNA_WEB_SEARCH_API_KEY',
+  'LUNA_WEATHER_PROVIDER',
+  'LUNA_WEATHER_API_KEY',
+  'LUNA_WEATHER_API_HOST',
+  'LUNA_LAT_LON',
+  'LUNA_MODEL_URL',
+  'LUNA_TTS_BACKEND',
+  'LUNA_TTS_URL',
+  'LUNA_TTS_REF_AUDIO',
+  'LUNA_TTS_PROMPT_TEXT',
+  'LUNA_TTS_PROMPT_LANG',
+  'LUNA_TTS_TEXT_LANG',
+  'LUNA_TTS_RUNTIME_DIR', // v0.35.3: the user's GPT-SoVITS checkout — wizard-managed, server never reads it
+] as const;
+
+export function filterWizardFields(raw: unknown): Record<string, string> {
+  const out: Record<string, string> = {};
+  if (typeof raw !== 'object' || raw === null) return out;
+  const rec = raw as Record<string, unknown>;
+  for (const key of WIZARD_KEYS) {
+    const v = rec[key];
+    if (typeof v !== 'string') continue;
+    const trimmed = v.trim();
+    if (trimmed !== '') out[key] = trimmed;
+  }
+  return out;
 }
 
 export type ProbeVerdict = { ok: boolean; error?: string };
